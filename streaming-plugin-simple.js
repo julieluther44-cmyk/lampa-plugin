@@ -25,22 +25,38 @@
             Lampa.Listener.follow('full', function(event) {
                 if (event.type === 'complite') {
                     console.log('[Streaming Platform] Full card loaded');
+                    console.log('[Streaming Platform] Event structure:', event);
+                    console.log('[Streaming Platform] event.object:', event.object);
+                    console.log('[Streaming Platform] event.object.activity:', event.object.activity);
 
                     setTimeout(function() {
-                        var component = event.object.activity.component();
-                        var card = event.data.movie;
+                        try {
+                            // Пробуем разные способы получить компонент
+                            var component = event.object.activity.component || event.object.component;
+                            console.log('[Streaming Platform] Component:', component);
 
-                        var button = $('<div class="full-start__button selector view--online">')
-                            .html('<svg width="17" height="17" viewBox="0 0 17 17" fill="none"><circle cx="8.5" cy="8.5" r="7" stroke="white"/><path d="M11 8.5L7 11V6L11 8.5Z" fill="white"/></svg><span>Смотреть онлайн</span>');
+                            var card = event.data.movie;
+                            console.log('[Streaming Platform] Card:', card);
 
-                        button.on('click', function() {
-                            Lampa.Noty.show('Кнопка работает! IMDb: ' + (card.imdb_id || 'not found'));
-                        });
+                            // Ищем контейнер для кнопок напрямую в DOM
+                            var container = $('.full-start__buttons');
+                            console.log('[Streaming Platform] Container found:', container.length);
 
-                        var container = component.find('.full-start__buttons');
-                        if (container.length) {
-                            container.append(button);
-                            console.log('[Streaming Platform] Button added');
+                            if (container.length) {
+                                var button = $('<div class="full-start__button selector view--online">')
+                                    .html('<svg width="17" height="17" viewBox="0 0 17 17" fill="none"><circle cx="8.5" cy="8.5" r="7" stroke="white"/><path d="M11 8.5L7 11V6L11 8.5Z" fill="white"/></svg><span>Смотреть онлайн</span>');
+
+                                button.on('click', function() {
+                                    Lampa.Noty.show('Кнопка работает! IMDb: ' + (card.imdb_id || 'not found'));
+                                });
+
+                                container.append(button);
+                                console.log('[Streaming Platform] Button added successfully');
+                            } else {
+                                console.error('[Streaming Platform] Container .full-start__buttons not found');
+                            }
+                        } catch (e) {
+                            console.error('[Streaming Platform] Error adding button:', e);
                         }
                     }, 100);
                 }

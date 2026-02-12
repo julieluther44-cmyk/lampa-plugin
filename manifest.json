@@ -5,7 +5,7 @@
   "author": "Streaming Platform Team",
   "icon": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iMTAiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iMiIvPjxwYXRoIGQ9Ik0xNSAxMkwxMCAxNVY5TDE1IDEyWiIgZmlsbD0id2hpdGUiLz48L3N2Zz4=",
   "type": "other",
-  "url": "https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/lampa-plugin/main/streaming-plugin.js",
+  "url": "https://raw.githubusercontent.com/julieluther44-cmyk/lampa-plugin/main/streaming-plugin.js",
   "min_version": "1.9.0",
   "packages": [
     {
@@ -35,7 +35,7 @@
       ]
     }
   ],
-  "repository": "https://github.com/YOUR_GITHUB_USERNAME/lampa-plugin",
-  "issues": "https://github.com/YOUR_GITHUB_USERNAME/lampa-plugin/issues",
-  "homepage": "https://YOUR_GITHUB_USERNAME.github.io/lampa-plugin"
+  "repository": "https://github.com/julieluther44-cmyk/lampa-plugin",
+  "issues": "https://github.com/julieluther44-cmyk/lampa-plugin/issues",
+  "homepage": "https://julieluther44-cmyk.github.io/lampa-plugin"
 }

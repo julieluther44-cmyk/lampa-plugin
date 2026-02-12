@@ -56,14 +56,20 @@
                                 console.log('[Streaming Platform] Button element', i, ':', el.className);
                             });
 
-                            // Ищем контейнер разными способами
-                            var container = componentHTML.find('.full-start__buttons');
-                            console.log('[Streaming Platform] .full-start__buttons found:', container.length);
+                            // Ищем контейнер (новая версия Lampa использует full-start-new__buttons)
+                            var container = componentHTML.find('.full-start-new__buttons');
+                            console.log('[Streaming Platform] .full-start-new__buttons found:', container.length);
+
+                            if (container.length === 0) {
+                                // Пробуем старый класс для совместимости
+                                container = componentHTML.find('.full-start__buttons');
+                                console.log('[Streaming Platform] .full-start__buttons found:', container.length);
+                            }
 
                             if (container.length === 0) {
                                 // Пробуем глобальный поиск
-                                container = $('.full-start__buttons');
-                                console.log('[Streaming Platform] Global .full-start__buttons found:', container.length);
+                                container = $('.full-start-new__buttons, .full-start__buttons');
+                                console.log('[Streaming Platform] Global search found:', container.length);
                             }
 
                             if (container && container.length > 0) {

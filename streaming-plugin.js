@@ -163,8 +163,13 @@
             playContent(card);
         });
 
-        // Найти контейнер для кнопок и добавить нашу кнопку
-        const buttonsContainer = component.find('.full-start__buttons');
+        // Найти контейнер для кнопок (новая версия Lampa использует full-start-new__buttons)
+        let buttonsContainer = component.find('.full-start-new__buttons');
+
+        // Fallback для старых версий Lampa
+        if (!buttonsContainer.length) {
+            buttonsContainer = component.find('.full-start__buttons');
+        }
 
         if (buttonsContainer.length) {
             buttonsContainer.append(button);
@@ -184,12 +189,14 @@
                 log('Full card loaded:', event.data);
 
                 const card = event.data.movie;
-                const component = event.object.activity.component();
+                const component = event.object.activity.component;
 
                 // Добавить кнопку после небольшой задержки (чтобы DOM успел обновиться)
                 setTimeout(function() {
-                    addWatchButton(component, card);
-                }, 100);
+                    // Получить HTML компонента
+                    const componentHTML = component.html ? $(component.html) : $(component);
+                    addWatchButton(componentHTML, card);
+                }, 500);
             }
         });
 

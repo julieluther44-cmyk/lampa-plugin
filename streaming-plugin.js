@@ -7,11 +7,12 @@
 
     // Настройки по умолчанию
     const DEFAULT_SETTINGS = {
-        balancer_url: 'http://localhost:8080',
+        balancer_url: 'http://103.246.145.55:3000',
         enabled: true,
         quality_preference: '1080p',
         auto_play: false,
-        show_logs: false
+        show_logs: false,
+        mock_mode: false  // Балансер доступен по публичному IP
     };
 
     let settings = DEFAULT_SETTINGS;
@@ -87,8 +88,21 @@
         Lampa.Loading.start();
 
         try {
-            // Запросить URL стрима у балансера
-            const playData = await requestPlay(imdbID);
+            let playData;
+
+            // Mock режим - не делаем запрос к балансеру
+            if (settings.mock_mode) {
+                log('Mock mode enabled - using test stream URL');
+                playData = {
+                    stream_url: 'https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.m3u8',
+                    quality: '1080p',
+                    backup_torrservers: []
+                };
+                Lampa.Noty.show('Mock режим: тестовое видео');
+            } else {
+                // Запросить URL стрима у балансера
+                playData = await requestPlay(imdbID);
+            }
 
             Lampa.Loading.stop();
 
@@ -108,8 +122,10 @@
             // Открыть плеер Lampa
             Lampa.Player.play(videoData);
 
-            // Настроить обработчик ошибок для failover
-            setupPlayerErrorHandler(playData);
+            // Настроить обработчик ошибок для failover (только если не mock)
+            if (!settings.mock_mode && playData.backup_torrservers) {
+                setupPlayerErrorHandler(playData);
+            }
 
         } catch (err) {
             Lampa.Loading.stop();

@@ -14,7 +14,7 @@
         show_logs: false
     };
 
-    let settings = Lampa.Storage.get('streaming_platform_settings', DEFAULT_SETTINGS);
+    let settings = DEFAULT_SETTINGS;
 
     // Логирование
     function log(...args) {
@@ -270,6 +270,9 @@
 
     // Регистрация плагина в Lampa
     function startPlugin() {
+        // Загрузить настройки из хранилища
+        settings = Lampa.Storage.get('streaming_platform_settings', DEFAULT_SETTINGS);
+
         // Добавить раздел настроек
         Lampa.Settings.listener.follow('open', function(event) {
             if (event.name === 'main') {

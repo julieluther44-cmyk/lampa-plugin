@@ -38,14 +38,17 @@
                             var card = event.data.movie;
                             console.log('[Streaming Platform] Card:', card);
 
-                            // Ищем контейнер внутри HTML компонента
-                            var componentHTML = component.html || $(component);
+                            // Получаем HTML компонента и оборачиваем в jQuery
+                            var componentHTML = component.html ? $(component.html) : $(component);
                             console.log('[Streaming Platform] Component HTML:', componentHTML);
+                            console.log('[Streaming Platform] Is jQuery object:', componentHTML instanceof jQuery);
 
+                            // Ищем контейнер
                             var container = componentHTML.find('.full-start__buttons');
-                            console.log('[Streaming Platform] Container found:', container.length);
+                            console.log('[Streaming Platform] Container:', container);
+                            console.log('[Streaming Platform] Container length:', container ? container.length : 'null');
 
-                            if (container.length) {
+                            if (container && container.length > 0) {
                                 var button = $('<div class="full-start__button selector view--online">')
                                     .html('<svg width="17" height="17" viewBox="0 0 17 17" fill="none"><circle cx="8.5" cy="8.5" r="7" stroke="white"/><path d="M11 8.5L7 11V6L11 8.5Z" fill="white"/></svg><span>Смотреть онлайн</span>');
 

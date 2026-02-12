@@ -285,18 +285,13 @@
         log(`Plugin v${PLUGIN_VERSION} started successfully`);
     }
 
-    // Точка входа - используем Lampa.Component для регистрации
+    // Точка входа
     if (window.Lampa) {
-        // Регистрируем компонент в Lampa
-        Lampa.Component.add('streaming_platform', startPlugin);
-
-        // Запускаем плагин
         startPlugin();
     } else {
         // Если Lampa еще не загружена, ждем
         document.addEventListener('DOMContentLoaded', function() {
             if (window.Lampa) {
-                Lampa.Component.add('streaming_platform', startPlugin);
                 startPlugin();
             } else {
                 error('Lampa not found');

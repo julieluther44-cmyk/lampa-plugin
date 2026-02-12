@@ -31,15 +31,18 @@
 
                     setTimeout(function() {
                         try {
-                            // Пробуем разные способы получить компонент
+                            // Получаем компонент
                             var component = event.object.activity.component || event.object.component;
                             console.log('[Streaming Platform] Component:', component);
 
                             var card = event.data.movie;
                             console.log('[Streaming Platform] Card:', card);
 
-                            // Ищем контейнер для кнопок напрямую в DOM
-                            var container = $('.full-start__buttons');
+                            // Ищем контейнер внутри HTML компонента
+                            var componentHTML = component.html || $(component);
+                            console.log('[Streaming Platform] Component HTML:', componentHTML);
+
+                            var container = componentHTML.find('.full-start__buttons');
                             console.log('[Streaming Platform] Container found:', container.length);
 
                             if (container.length) {
@@ -58,7 +61,7 @@
                         } catch (e) {
                             console.error('[Streaming Platform] Error adding button:', e);
                         }
-                    }, 100);
+                    }, 500);
                 }
             });
         } catch (e) {

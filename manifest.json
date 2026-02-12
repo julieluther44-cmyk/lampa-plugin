@@ -1,0 +1,41 @@
+{
+  "name": "Streaming Platform",
+  "description": "Онлайн просмотр через собственную стриминг-платформу с автоматическим выбором оптимального сервера",
+  "version": "1.0.0",
+  "author": "Streaming Platform Team",
+  "icon": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iMTAiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iMiIvPjxwYXRoIGQ9Ik0xNSAxMkwxMCAxNVY5TDE1IDEyWiIgZmlsbD0id2hpdGUiLz48L3N2Zz4=",
+  "type": "other",
+  "url": "https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/lampa-plugin/main/streaming-plugin.js",
+  "min_version": "1.9.0",
+  "packages": [
+    {
+      "name": "main",
+      "js": ["streaming-plugin.js"],
+      "css": []
+    }
+  ],
+  "permissions": [
+    "network"
+  ],
+  "settings": {
+    "component": "streaming_platform",
+    "icon": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iMTAiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iMiIvPjxwYXRoIGQ9Ik0xNSAxMkwxMCAxNVY5TDE1IDEyWiIgZmlsbD0id2hpdGUiLz48L3N2Zz4="
+  },
+  "changelog": [
+    {
+      "version": "1.0.0",
+      "date": "2026-02-12",
+      "changes": [
+        "Первый релиз",
+        "Кнопка 'Смотреть онлайн' на карточках",
+        "Интеграция с балансером",
+        "Failover на backup сервера",
+        "Настройки качества",
+        "Анонимный user ID"
+      ]
+    }
+  ],
+  "repository": "https://github.com/YOUR_GITHUB_USERNAME/lampa-plugin",
+  "issues": "https://github.com/YOUR_GITHUB_USERNAME/lampa-plugin/issues",
+  "homepage": "https://YOUR_GITHUB_USERNAME.github.io/lampa-plugin"
+}

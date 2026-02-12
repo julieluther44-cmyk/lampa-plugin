@@ -41,12 +41,30 @@
                             // Получаем HTML компонента и оборачиваем в jQuery
                             var componentHTML = component.html ? $(component.html) : $(component);
                             console.log('[Streaming Platform] Component HTML:', componentHTML);
-                            console.log('[Streaming Platform] Is jQuery object:', componentHTML instanceof jQuery);
+                            console.log('[Streaming Platform] Component HTML tag:', componentHTML.prop('tagName'));
+                            console.log('[Streaming Platform] Component HTML classes:', componentHTML.attr('class'));
 
-                            // Ищем контейнер
+                            // Выводим HTML для отладки
+                            if (componentHTML[0]) {
+                                console.log('[Streaming Platform] Component HTML content (first 500 chars):', componentHTML[0].outerHTML.substring(0, 500));
+                            }
+
+                            // Пробуем найти любые элементы с "button" в классе
+                            var allButtons = componentHTML.find('[class*="button"]');
+                            console.log('[Streaming Platform] All elements with "button" in class:', allButtons.length);
+                            allButtons.each(function(i, el) {
+                                console.log('[Streaming Platform] Button element', i, ':', el.className);
+                            });
+
+                            // Ищем контейнер разными способами
                             var container = componentHTML.find('.full-start__buttons');
-                            console.log('[Streaming Platform] Container:', container);
-                            console.log('[Streaming Platform] Container length:', container ? container.length : 'null');
+                            console.log('[Streaming Platform] .full-start__buttons found:', container.length);
+
+                            if (container.length === 0) {
+                                // Пробуем глобальный поиск
+                                container = $('.full-start__buttons');
+                                console.log('[Streaming Platform] Global .full-start__buttons found:', container.length);
+                            }
 
                             if (container && container.length > 0) {
                                 var button = $('<div class="full-start__button selector view--online">')
@@ -57,7 +75,7 @@
                                 });
 
                                 container.append(button);
-                                console.log('[Streaming Platform] Button added successfully');
+                                console.log('[Streaming Platform] Button added successfully to container');
                             } else {
                                 console.error('[Streaming Platform] Container .full-start__buttons not found');
                             }

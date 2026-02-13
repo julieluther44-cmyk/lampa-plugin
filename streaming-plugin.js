@@ -170,9 +170,14 @@
         var input = modal.find('.modal__input');
         input.focus();
 
+        function closeModal() {
+            modal.remove();
+            $(document).off('keydown.modalinput');
+        }
+
         modal.find('.modal__button--add').on('click', function() {
             var magnet = input.val().trim();
-            modal.remove();
+            closeModal();
 
             log('Magnet entered:', magnet);
 
@@ -185,7 +190,7 @@
         });
 
         modal.find('.modal__button--cancel').on('click', function() {
-            modal.remove();
+            closeModal();
             Lampa.Controller.toggle('content');
         });
 
@@ -199,8 +204,7 @@
         // Escape для закрытия
         $(document).on('keydown.modalinput', function(e) {
             if (e.which === 27) {
-                modal.remove();
-                $(document).off('keydown.modalinput');
+                closeModal();
                 Lampa.Controller.toggle('content');
             }
         });

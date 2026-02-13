@@ -10,8 +10,7 @@
 
     // Настройки
     const DEFAULT_SETTINGS = {
-        torrserver_url: 'http://178.20.46.93:8090',
-        torrserver_auth: 'admin:90Cubg8RQAe24h',
+        orchestrator_url: 'http://178.20.46.93:8091',
         enabled: true,
         quality_preference: '1080p',
         show_logs: true
@@ -98,34 +97,19 @@
         log('Position tracking stopped');
     }
 
-    // Base64 encode для авторизации
-    function getAuthHeader() {
-        if (settings.torrserver_auth) {
-            return 'Basic ' + btoa(settings.torrserver_auth);
-        }
-        return null;
-    }
-
-    // API запрос к TorrServer
-    async function apiRequest(endpoint, method = 'GET', body = null, needAuth = false) {
-        const url = settings.torrserver_url + endpoint;
+    // API запрос к Orchestrator
+    async function apiRequest(endpoint, method = 'GET', body = null) {
+        const url = settings.orchestrator_url + endpoint;
         const headers = {
             'Content-Type': 'application/json'
         };
-
-        if (needAuth) {
-            const auth = getAuthHeader();
-            if (auth) {
-                headers['Authorization'] = auth;
-            }
-        }
 
         const options = { method, headers };
         if (body) {
             options.body = JSON.stringify(body);
         }
 
-        log('API request:', method, endpoint);
+        log('API request:', method, url);
         const response = await fetch(url, options);
 
         if (!response.ok) {
@@ -142,7 +126,7 @@
 
     // === Orchestrator API ===
 
-    // Создать сессию
+    // Создать сессию (orchestrator добавит торрент если нужно)
     async function createSession(torrentHash, fileId) {
         return await apiRequest('/orchestrator/session', 'POST', {
             torrent_hash: torrentHash,
@@ -171,58 +155,43 @@
         return await apiRequest('/orchestrator/stats', 'GET');
     }
 
-    // === TorrServer API ===
-
     // Получить список торрентов
     async function getTorrents() {
-        return await apiRequest('/torrents', 'POST', { action: 'list' }, true);
+        return await apiRequest('/orchestrator/torrents', 'GET');
     }
 
     // Добавить торрент
-    async function addTorrent(magnet, title) {
-        return await apiRequest('/torrents', 'POST', {
-            action: 'add',
-            link: magnet,
+    async function addTorrent(magnet, title, poster) {
+        return await apiRequest('/orchestrator/torrents', 'POST', {
+            magnet: magnet,
             title: title,
-            save_to_db: true
-        }, true);
+            poster: poster
+        });
     }
 
-    // Загрузить торрент
-    async function loadTorrent(hash) {
-        return await apiRequest('/torrents', 'POST', {
-            action: 'get',
-            hash: hash
-        }, true);
+    // Получить файлы торрента
+    async function getTorrentFiles(hash) {
+        return await apiRequest(`/orchestrator/torrents/${hash}/files`, 'GET');
     }
 
-    // Найти видео файл в торренте
-    function findVideoFile(torrentData) {
+
+    // Найти видео файл в списке файлов
+    function findVideoFileFromList(files) {
         const videoExtensions = ['.mkv', '.mp4', '.avi', '.mov', '.wmv', '.m4v'];
-        let files = [];
 
-        if (torrentData.file_stats) {
-            files = torrentData.file_stats;
-        } else if (torrentData.data) {
-            try {
-                const data = JSON.parse(torrentData.data);
-                if (data.TorrServer && data.TorrServer.Files) {
-                    files = data.TorrServer.Files;
-                }
-            } catch (e) {
-                log('Failed to parse torrent data:', e);
-            }
+        if (!files || !Array.isArray(files)) {
+            return null;
         }
 
         let bestFile = null;
         let maxSize = 0;
 
         for (const file of files) {
-            const path = file.path || '';
+            const path = file.path || file.name || '';
             const ext = path.substring(path.lastIndexOf('.')).toLowerCase();
 
             if (videoExtensions.includes(ext)) {
-                const size = file.length || 0;
+                const size = file.length || file.size || 0;
                 if (size > maxSize) {
                     maxSize = size;
                     bestFile = file;
@@ -368,7 +337,7 @@
             await new Promise(r => setTimeout(r, 3000));
 
             // 4. Формируем HLS URL
-            const hlsUrl = `${settings.torrserver_url}/orchestrator/${session.session_id}/master.m3u8`;
+            const hlsUrl = `${settings.orchestrator_url}/orchestrator/${session.session_id}/master.m3u8`;
             log('HLS URL:', hlsUrl);
 
             // Сохраняем текущую сессию
@@ -438,23 +407,21 @@
         Lampa.Loading.start();
 
         try {
-            // Загружаем торрент
-            const torrentData = await loadTorrent(hash);
-            log('Torrent data:', torrentData);
+            // Загружаем файлы торрента через orchestrator
+            let files = await getTorrentFiles(hash);
+            log('Torrent files:', files);
 
             // Ждём пока торрент загрузит info
             let attempts = 0;
-            let data = torrentData;
-
-            while (attempts < 10 && (!data.file_stats || data.file_stats.length === 0)) {
+            while (attempts < 10 && (!files || files.length === 0)) {
                 await new Promise(r => setTimeout(r, 1000));
-                data = await loadTorrent(hash);
+                files = await getTorrentFiles(hash);
                 attempts++;
                 log('Waiting for torrent info, attempt:', attempts);
             }
 
             // Находим видео файл
-            const videoFile = findVideoFile(data);
+            const videoFile = findVideoFileFromList(files);
 
             if (!videoFile) {
                 throw new Error('Видео файл не найден в торренте');
@@ -600,35 +567,17 @@
         Lampa.SettingsApi.addParam({
             component: 'orchestrator_streaming',
             param: {
-                name: 'torrserver_url',
+                name: 'orchestrator_url',
                 type: 'input',
-                values: settings.torrserver_url,
-                default: DEFAULT_SETTINGS.torrserver_url
+                values: settings.orchestrator_url,
+                default: DEFAULT_SETTINGS.orchestrator_url
             },
             field: {
-                name: 'URL TorrServer',
-                description: 'Адрес TorrServer с Orchestrator'
+                name: 'URL Orchestrator',
+                description: 'Адрес сервера Orchestrator (порт 8091)'
             },
             onChange: function(value) {
-                settings.torrserver_url = value;
-                Lampa.Storage.set('orch_settings', settings);
-            }
-        });
-
-        Lampa.SettingsApi.addParam({
-            component: 'orchestrator_streaming',
-            param: {
-                name: 'torrserver_auth',
-                type: 'input',
-                values: settings.torrserver_auth,
-                default: ''
-            },
-            field: {
-                name: 'Авторизация',
-                description: 'user:password (если требуется)'
-            },
-            onChange: function(value) {
-                settings.torrserver_auth = value;
+                settings.orchestrator_url = value;
                 Lampa.Storage.set('orch_settings', settings);
             }
         });
@@ -669,7 +618,7 @@
 
         initialize();
         Lampa.Noty.show('Orchestrator v' + PLUGIN_VERSION);
-        log('Started, TorrServer:', settings.torrserver_url);
+        log('Started, Orchestrator URL:', settings.orchestrator_url);
     }
 
     if (window.Lampa) {

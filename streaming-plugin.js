@@ -1,11 +1,11 @@
 (function() {
     'use strict';
 
-    const PLUGIN_NAME = 'streaming-hls';
-    const PLUGIN_VERSION = '2.2.0';
+    const PLUGIN_NAME = 'streaming-orchestrator';
+    const PLUGIN_VERSION = '3.0.0';
 
-    // Текущее воспроизведение (для сохранения позиции)
-    let currentPlayback = null;
+    // Текущая сессия orchestrator
+    let currentSession = null;
     let positionSaveInterval = null;
 
     // Настройки
@@ -13,7 +13,7 @@
         torrserver_url: 'http://178.20.46.93:8090',
         torrserver_auth: 'admin:90Cubg8RQAe24h',
         enabled: true,
-        quality_preference: '720p',
+        quality_preference: '1080p',
         show_logs: true
     };
 
@@ -21,22 +21,22 @@
 
     function log(...args) {
         if (settings.show_logs) {
-            console.log('[HLS Plugin]', ...args);
+            console.log('[Orchestrator]', ...args);
         }
     }
 
     function error(...args) {
-        console.error('[HLS Plugin]', ...args);
+        console.error('[Orchestrator]', ...args);
     }
 
     // === Сохранение позиции воспроизведения ===
 
     function getPositionKey(hash, fileId) {
-        return 'hls_position_' + hash + '_' + fileId;
+        return 'orch_position_' + hash + '_' + fileId;
     }
 
     function savePosition(hash, fileId, position) {
-        if (position > 10) { // Сохраняем только если больше 10 секунд
+        if (position > 10) {
             const key = getPositionKey(hash, fileId);
             const data = {
                 position: position,
@@ -51,7 +51,6 @@
         const key = getPositionKey(hash, fileId);
         const data = Lampa.Storage.get(key, null);
         if (data && data.position) {
-            // Позиция валидна 7 дней
             const maxAge = 7 * 24 * 60 * 60 * 1000;
             if (Date.now() - data.timestamp < maxAge) {
                 log('Position loaded:', data.position);
@@ -61,18 +60,9 @@
         return 0;
     }
 
-    function clearPosition(hash, fileId) {
-        const key = getPositionKey(hash, fileId);
-        Lampa.Storage.set(key, null);
-        log('Position cleared');
-    }
-
     function startPositionTracking(hash, fileId) {
         stopPositionTracking();
 
-        currentPlayback = { hash, fileId };
-
-        // Сохраняем позицию каждые 5 секунд
         positionSaveInterval = setInterval(function() {
             try {
                 const player = Lampa.Player.video();
@@ -94,18 +84,17 @@
         }
 
         // Сохраняем финальную позицию
-        if (currentPlayback) {
+        if (currentSession) {
             try {
                 const player = Lampa.Player.video();
                 if (player && player.currentTime) {
-                    savePosition(currentPlayback.hash, currentPlayback.fileId, player.currentTime);
+                    savePosition(currentSession.hash, currentSession.fileId, player.currentTime);
                 }
             } catch (e) {
                 log('Error saving final position:', e);
             }
         }
 
-        currentPlayback = null;
         log('Position tracking stopped');
     }
 
@@ -118,15 +107,17 @@
     }
 
     // API запрос к TorrServer
-    async function torrserverRequest(endpoint, method = 'GET', body = null) {
+    async function apiRequest(endpoint, method = 'GET', body = null, needAuth = false) {
         const url = settings.torrserver_url + endpoint;
         const headers = {
             'Content-Type': 'application/json'
         };
 
-        const auth = getAuthHeader();
-        if (auth) {
-            headers['Authorization'] = auth;
+        if (needAuth) {
+            const auth = getAuthHeader();
+            if (auth) {
+                headers['Authorization'] = auth;
+            }
         }
 
         const options = { method, headers };
@@ -134,11 +125,11 @@
             options.body = JSON.stringify(body);
         }
 
-        log('TorrServer request:', method, endpoint);
+        log('API request:', method, endpoint);
         const response = await fetch(url, options);
 
         if (!response.ok) {
-            throw new Error(`TorrServer error: ${response.status}`);
+            throw new Error(`API error: ${response.status}`);
         }
 
         const text = await response.text();
@@ -149,27 +140,60 @@
         }
     }
 
-    // Получить список торрентов
-    async function getTorrents() {
-        return await torrserverRequest('/torrents', 'POST', { action: 'list' });
+    // === Orchestrator API ===
+
+    // Создать сессию
+    async function createSession(torrentHash, fileId) {
+        return await apiRequest('/orchestrator/session', 'POST', {
+            torrent_hash: torrentHash,
+            file_id: fileId
+        });
     }
 
-    // Добавить торрент по magnet
+    // Запустить сессию (FFmpeg)
+    async function startSession(sessionId, quality) {
+        return await apiRequest(`/orchestrator/session/${sessionId}/start`, 'POST', {
+            quality: quality || settings.quality_preference
+        });
+    }
+
+    // Остановить сессию
+    async function stopSession(sessionId) {
+        try {
+            return await apiRequest(`/orchestrator/session/${sessionId}`, 'DELETE');
+        } catch (e) {
+            log('Error stopping session:', e);
+        }
+    }
+
+    // Получить статистику
+    async function getStats() {
+        return await apiRequest('/orchestrator/stats', 'GET');
+    }
+
+    // === TorrServer API ===
+
+    // Получить список торрентов
+    async function getTorrents() {
+        return await apiRequest('/torrents', 'POST', { action: 'list' }, true);
+    }
+
+    // Добавить торрент
     async function addTorrent(magnet, title) {
-        return await torrserverRequest('/torrents', 'POST', {
+        return await apiRequest('/torrents', 'POST', {
             action: 'add',
             link: magnet,
             title: title,
             save_to_db: true
-        });
+        }, true);
     }
 
-    // Загрузить торрент (получить info)
+    // Загрузить торрент
     async function loadTorrent(hash) {
-        return await torrserverRequest('/torrents', 'POST', {
+        return await apiRequest('/torrents', 'POST', {
             action: 'get',
             hash: hash
-        });
+        }, true);
     }
 
     // Найти видео файл в торренте
@@ -177,7 +201,6 @@
         const videoExtensions = ['.mkv', '.mp4', '.avi', '.mov', '.wmv', '.m4v'];
         let files = [];
 
-        // Парсим file_stats из ответа
         if (torrentData.file_stats) {
             files = torrentData.file_stats;
         } else if (torrentData.data) {
@@ -191,7 +214,6 @@
             }
         }
 
-        // Находим самый большой видео файл
         let bestFile = null;
         let maxSize = 0;
 
@@ -211,40 +233,13 @@
         return bestFile;
     }
 
-    // Получить HLS URL для файла
-    function getHLSUrl(hash, fileId) {
-        return `${settings.torrserver_url}/hls/${hash}/${fileId}/master.m3u8`;
-    }
-
-    // Показать диалог выбора торрента
-    function showTorrentSelector(torrents, card, onSelect) {
-        const items = torrents.map(t => ({
-            title: t.title || t.name || 'Unknown',
-            hash: t.hash,
-            size: t.torrent_size ? formatSize(t.torrent_size) : '',
-            subtitle: t.stat_string || ''
-        }));
-
-        Lampa.Select.show({
-            title: 'Выберите торрент',
-            items: items,
-            onSelect: function(item) {
-                onSelect(item.hash);
-            },
-            onBack: function() {
-                Lampa.Controller.toggle('content');
-            }
-        });
-    }
-
-    // Форматирование размера
+    // Форматирование
     function formatSize(bytes) {
         if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(2) + ' GB';
         if (bytes >= 1048576) return (bytes / 1048576).toFixed(2) + ' MB';
         return bytes + ' B';
     }
 
-    // Форматирование времени
     function formatTime(seconds) {
         const h = Math.floor(seconds / 3600);
         const m = Math.floor((seconds % 3600) / 60);
@@ -257,7 +252,6 @@
 
     // Показать диалог добавления торрента
     function showAddTorrentDialog(card) {
-        // Создаём модальное окно вручную
         var modal = $('<div class="modal modal--input"><div class="modal__content"><div class="modal__head"><div class="modal__title">Добавить торрент</div></div><div class="modal__body"><div class="modal__descr">Вставьте magnet ссылку:</div><input type="text" class="modal__input" placeholder="magnet:?xt=urn:btih:..." style="width:100%;padding:10px;margin:10px 0;background:#333;border:1px solid #555;color:#fff;border-radius:5px;font-size:14px;"></div><div class="modal__footer"><div class="modal__buttons"><div class="modal__button modal__button--add selector">Добавить</div><div class="modal__button modal__button--cancel selector">Отмена</div></div></div></div></div>');
 
         $('body').append(modal);
@@ -274,8 +268,6 @@
             var magnet = input.val().trim();
             closeModal();
 
-            log('Magnet entered:', magnet);
-
             if (!magnet || !magnet.startsWith('magnet:')) {
                 Lampa.Noty.show('Неверная magnet ссылка');
                 return;
@@ -289,19 +281,16 @@
             Lampa.Controller.toggle('content');
         });
 
-        // Enter для отправки
         input.on('keypress', function(e) {
             if (e.which === 13) {
                 modal.find('.modal__button--add').click();
             }
         });
 
-        // Разрешить Ctrl+V
         input.on('keydown', function(e) {
             e.stopPropagation();
         });
 
-        // Escape для закрытия
         $(document).on('keydown.modalinput', function(e) {
             if (e.which === 27) {
                 closeModal();
@@ -322,7 +311,6 @@
             log('Torrent added:', result);
 
             if (result && result.hash) {
-                // Даём время на загрузку info
                 await new Promise(r => setTimeout(r, 2000));
                 Lampa.Loading.stop();
                 await playTorrent(result.hash, card);
@@ -336,7 +324,114 @@
         }
     }
 
-    // Воспроизвести торрент по hash
+    // Показать выбор качества
+    function showQualitySelector(hash, fileId, card, savedPosition) {
+        const qualities = [
+            { title: '1080p (без транскодирования)', value: '1080p', subtitle: 'Оригинальное качество' },
+            { title: '720p', value: '720p', subtitle: 'Транскодирование' },
+            { title: '480p', value: '480p', subtitle: 'Низкое качество' }
+        ];
+
+        Lampa.Select.show({
+            title: 'Выберите качество',
+            items: qualities,
+            onSelect: async function(item) {
+                await startPlayback(hash, fileId, item.value, card, savedPosition);
+            },
+            onBack: function() {
+                Lampa.Controller.toggle('content');
+            }
+        });
+    }
+
+    // Запустить воспроизведение через Orchestrator
+    async function startPlayback(hash, fileId, quality, card, savedPosition) {
+        Lampa.Loading.start();
+
+        try {
+            // 1. Создаём сессию
+            log('Creating session for', hash, 'file', fileId);
+            const session = await createSession(hash, fileId);
+            log('Session created:', session);
+
+            if (!session || !session.session_id) {
+                throw new Error('Failed to create session');
+            }
+
+            // 2. Запускаем FFmpeg
+            log('Starting session with quality:', quality);
+            const startResult = await startSession(session.session_id, quality);
+            log('Session started:', startResult);
+
+            // 3. Даём время FFmpeg создать первые сегменты
+            Lampa.Noty.show('Подготовка видео...');
+            await new Promise(r => setTimeout(r, 3000));
+
+            // 4. Формируем HLS URL
+            const hlsUrl = `${settings.torrserver_url}/orchestrator/${session.session_id}/master.m3u8`;
+            log('HLS URL:', hlsUrl);
+
+            // Сохраняем текущую сессию
+            currentSession = {
+                sessionId: session.session_id,
+                hash: hash,
+                fileId: fileId,
+                quality: quality
+            };
+
+            Lampa.Loading.stop();
+
+            // 5. Воспроизводим
+            Lampa.Player.play({
+                url: hlsUrl,
+                title: card.title || card.name || 'Video',
+                quality: {},
+                subtitles: []
+            });
+
+            Lampa.Player.playlist([{
+                url: hlsUrl,
+                title: card.title || card.name || 'Video'
+            }]);
+
+            // Начинаем отслеживание позиции
+            startPositionTracking(hash, fileId);
+
+            // Перемотка на сохранённую позицию
+            if (savedPosition > 0) {
+                log('Will seek to saved position:', savedPosition);
+
+                let attempts = 0;
+                const maxAttempts = 15;
+                const seekInterval = setInterval(function() {
+                    attempts++;
+                    try {
+                        const player = Lampa.Player.video();
+                        if (player && player.readyState >= 2) {
+                            log('Seeking to position:', savedPosition);
+                            player.currentTime = savedPosition;
+                            Lampa.Noty.show('Продолжение с ' + formatTime(savedPosition));
+                            clearInterval(seekInterval);
+                        }
+                    } catch (e) {
+                        log('Seek attempt failed:', e);
+                    }
+
+                    if (attempts >= maxAttempts) {
+                        clearInterval(seekInterval);
+                        log('Failed to seek after', maxAttempts, 'attempts');
+                    }
+                }, 1000);
+            }
+
+        } catch (err) {
+            Lampa.Loading.stop();
+            Lampa.Noty.show('Ошибка: ' + err.message);
+            error('Playback failed:', err);
+        }
+    }
+
+    // Воспроизвести торрент
     async function playTorrent(hash, card) {
         log('Playing torrent:', hash);
 
@@ -346,14 +441,6 @@
             // Загружаем торрент
             const torrentData = await loadTorrent(hash);
             log('Torrent data:', torrentData);
-
-            if (torrentData.stat_string === 'Torrent in db') {
-                // Нужно активировать торрент
-                log('Torrent in db, activating...');
-                await new Promise(r => setTimeout(r, 1000));
-                const activated = await loadTorrent(hash);
-                log('Activated:', activated);
-            }
 
             // Ждём пока торрент загрузит info
             let attempts = 0;
@@ -375,69 +462,27 @@
 
             log('Video file found:', videoFile);
 
-            // Формируем HLS URL
-            const hlsUrl = getHLSUrl(hash, videoFile.id);
-            log('HLS URL:', hlsUrl);
-
             // Загружаем сохранённую позицию
             const savedPosition = loadPosition(hash, videoFile.id);
 
             Lampa.Loading.stop();
 
-            // Воспроизводим
-            Lampa.Player.play({
-                url: hlsUrl,
-                title: card.title || card.name || videoFile.path,
-                quality: {},
-                subtitles: []
-            });
-
-            Lampa.Player.playlist([{
-                url: hlsUrl,
-                title: card.title || card.name || videoFile.path
-            }]);
-
-            // Начинаем отслеживание позиции
-            startPositionTracking(hash, videoFile.id);
-
-            // Перемотка на сохранённую позицию когда видео готово
-            if (savedPosition > 0) {
-                log('Will seek to saved position:', savedPosition);
-
-                // Функция для перемотки
-                function seekToSavedPosition() {
-                    try {
-                        const player = Lampa.Player.video();
-                        if (player && player.readyState >= 2) {
-                            log('Seeking to position:', savedPosition);
-                            player.currentTime = savedPosition;
-                            Lampa.Noty.show('Продолжение с ' + formatTime(savedPosition));
-                            return true;
-                        }
-                    } catch (e) {
-                        log('Error seeking:', e);
-                    }
-                    return false;
-                }
-
-                // Пробуем несколько раз с задержкой
-                let attempts = 0;
-                const maxAttempts = 10;
-                const seekInterval = setInterval(function() {
-                    attempts++;
-                    if (seekToSavedPosition() || attempts >= maxAttempts) {
-                        clearInterval(seekInterval);
-                        if (attempts >= maxAttempts) {
-                            log('Failed to seek after', maxAttempts, 'attempts');
-                        }
-                    }
-                }, 1000);
-            }
+            // Показываем выбор качества
+            showQualitySelector(hash, videoFile.id, card, savedPosition);
 
         } catch (err) {
             Lampa.Loading.stop();
-            Lampa.Noty.show('Ошибка воспроизведения: ' + err.message);
+            Lampa.Noty.show('Ошибка: ' + err.message);
             error('Play failed:', err);
+        }
+    }
+
+    // Очистка сессии при выходе
+    async function cleanupSession() {
+        if (currentSession) {
+            log('Cleaning up session:', currentSession.sessionId);
+            await stopSession(currentSession.sessionId);
+            currentSession = null;
         }
     }
 
@@ -445,22 +490,22 @@
     async function playContent(card) {
         log('Play content:', card);
 
+        // Очищаем предыдущую сессию
+        await cleanupSession();
+
         Lampa.Loading.start();
 
         try {
-            // Получаем список торрентов
             const torrents = await getTorrents();
             log('Available torrents:', torrents);
 
             Lampa.Loading.stop();
 
             if (!torrents || torrents.length === 0) {
-                // Нет торрентов - показываем диалог добавления
                 showAddTorrentDialog(card);
                 return;
             }
 
-            // Показываем меню выбора
             const items = [
                 {
                     title: '➕ Добавить новый торрент',
@@ -500,14 +545,13 @@
     function addWatchButton(component, card) {
         if (!settings.enabled) return;
 
-        const button = $('<div class="full-start__button selector view--online-hls">')
-            .html('<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z" fill="currentColor"/></svg><span>HLS Стрим</span>');
+        const button = $('<div class="full-start__button selector view--online-orch">')
+            .html('<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z" fill="currentColor"/></svg><span>Смотреть</span>');
 
         button.on('hover:enter', function() {
             playContent(card);
         });
 
-        // Для клика мышью
         button.on('click', function() {
             playContent(card);
         });
@@ -539,21 +583,22 @@
             }
         });
 
-        // Слушаем закрытие плеера для сохранения позиции
+        // Очистка при закрытии плеера
         Lampa.Listener.follow('player', function(event) {
             if (event.type === 'destroy' || event.type === 'exit') {
-                log('Player closed, saving position');
+                log('Player closed');
                 stopPositionTracking();
+                cleanupSession();
             }
         });
 
         log('Initialized');
     }
 
-    // Настройки плагина
+    // Настройки
     function addSettings() {
         Lampa.SettingsApi.addParam({
-            component: 'hls_streaming',
+            component: 'orchestrator_streaming',
             param: {
                 name: 'torrserver_url',
                 type: 'input',
@@ -562,16 +607,16 @@
             },
             field: {
                 name: 'URL TorrServer',
-                description: 'Адрес TorrServer с HLS'
+                description: 'Адрес TorrServer с Orchestrator'
             },
             onChange: function(value) {
                 settings.torrserver_url = value;
-                Lampa.Storage.set('hls_settings', settings);
+                Lampa.Storage.set('orch_settings', settings);
             }
         });
 
         Lampa.SettingsApi.addParam({
-            component: 'hls_streaming',
+            component: 'orchestrator_streaming',
             param: {
                 name: 'torrserver_auth',
                 type: 'input',
@@ -584,14 +629,36 @@
             },
             onChange: function(value) {
                 settings.torrserver_auth = value;
-                Lampa.Storage.set('hls_settings', settings);
+                Lampa.Storage.set('orch_settings', settings);
+            }
+        });
+
+        Lampa.SettingsApi.addParam({
+            component: 'orchestrator_streaming',
+            param: {
+                name: 'quality_preference',
+                type: 'select',
+                values: {
+                    '1080p': '1080p (без транскодирования)',
+                    '720p': '720p',
+                    '480p': '480p'
+                },
+                default: '1080p'
+            },
+            field: {
+                name: 'Качество по умолчанию',
+                description: 'Предпочтительное качество видео'
+            },
+            onChange: function(value) {
+                settings.quality_preference = value;
+                Lampa.Storage.set('orch_settings', settings);
             }
         });
     }
 
     // Запуск
     function startPlugin() {
-        const saved = Lampa.Storage.get('hls_settings', {});
+        const saved = Lampa.Storage.get('orch_settings', {});
         settings = Object.assign({}, DEFAULT_SETTINGS, saved);
 
         Lampa.Settings.listener.follow('open', function(e) {
@@ -601,7 +668,7 @@
         });
 
         initialize();
-        Lampa.Noty.show('HLS Streaming v' + PLUGIN_VERSION);
+        Lampa.Noty.show('Orchestrator v' + PLUGIN_VERSION);
         log('Started, TorrServer:', settings.torrserver_url);
     }
 

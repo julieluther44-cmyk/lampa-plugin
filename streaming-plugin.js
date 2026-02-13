@@ -2,7 +2,11 @@
     'use strict';
 
     const PLUGIN_NAME = 'streaming-hls';
-    const PLUGIN_VERSION = '2.0.0';
+    const PLUGIN_VERSION = '2.1.0';
+
+    // Текущее воспроизведение (для сохранения позиции)
+    let currentPlayback = null;
+    let positionSaveInterval = null;
 
     // Настройки
     const DEFAULT_SETTINGS = {
@@ -23,6 +27,86 @@
 
     function error(...args) {
         console.error('[HLS Plugin]', ...args);
+    }
+
+    // === Сохранение позиции воспроизведения ===
+
+    function getPositionKey(hash, fileId) {
+        return 'hls_position_' + hash + '_' + fileId;
+    }
+
+    function savePosition(hash, fileId, position) {
+        if (position > 10) { // Сохраняем только если больше 10 секунд
+            const key = getPositionKey(hash, fileId);
+            const data = {
+                position: position,
+                timestamp: Date.now()
+            };
+            Lampa.Storage.set(key, data);
+            log('Position saved:', position);
+        }
+    }
+
+    function loadPosition(hash, fileId) {
+        const key = getPositionKey(hash, fileId);
+        const data = Lampa.Storage.get(key, null);
+        if (data && data.position) {
+            // Позиция валидна 7 дней
+            const maxAge = 7 * 24 * 60 * 60 * 1000;
+            if (Date.now() - data.timestamp < maxAge) {
+                log('Position loaded:', data.position);
+                return data.position;
+            }
+        }
+        return 0;
+    }
+
+    function clearPosition(hash, fileId) {
+        const key = getPositionKey(hash, fileId);
+        Lampa.Storage.set(key, null);
+        log('Position cleared');
+    }
+
+    function startPositionTracking(hash, fileId) {
+        stopPositionTracking();
+
+        currentPlayback = { hash, fileId };
+
+        // Сохраняем позицию каждые 5 секунд
+        positionSaveInterval = setInterval(function() {
+            try {
+                const player = Lampa.Player.video();
+                if (player && player.currentTime) {
+                    savePosition(hash, fileId, player.currentTime);
+                }
+            } catch (e) {
+                log('Error saving position:', e);
+            }
+        }, 5000);
+
+        log('Position tracking started');
+    }
+
+    function stopPositionTracking() {
+        if (positionSaveInterval) {
+            clearInterval(positionSaveInterval);
+            positionSaveInterval = null;
+        }
+
+        // Сохраняем финальную позицию
+        if (currentPlayback) {
+            try {
+                const player = Lampa.Player.video();
+                if (player && player.currentTime) {
+                    savePosition(currentPlayback.hash, currentPlayback.fileId, player.currentTime);
+                }
+            } catch (e) {
+                log('Error saving final position:', e);
+            }
+        }
+
+        currentPlayback = null;
+        log('Position tracking stopped');
     }
 
     // Base64 encode для авторизации
@@ -160,6 +244,17 @@
         return bytes + ' B';
     }
 
+    // Форматирование времени
+    function formatTime(seconds) {
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        const s = Math.floor(seconds % 60);
+        if (h > 0) {
+            return h + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+        }
+        return m + ':' + String(s).padStart(2, '0');
+    }
+
     // Показать диалог добавления торрента
     function showAddTorrentDialog(card) {
         // Создаём модальное окно вручную
@@ -284,6 +379,9 @@
             const hlsUrl = getHLSUrl(hash, videoFile.id);
             log('HLS URL:', hlsUrl);
 
+            // Загружаем сохранённую позицию
+            const savedPosition = loadPosition(hash, videoFile.id);
+
             Lampa.Loading.stop();
 
             // Воспроизводим
@@ -298,6 +396,25 @@
                 url: hlsUrl,
                 title: card.title || card.name || videoFile.path
             }]);
+
+            // Начинаем отслеживание позиции
+            startPositionTracking(hash, videoFile.id);
+
+            // Восстанавливаем позицию после начала воспроизведения
+            if (savedPosition > 0) {
+                setTimeout(function() {
+                    try {
+                        const player = Lampa.Player.video();
+                        if (player) {
+                            log('Seeking to saved position:', savedPosition);
+                            player.currentTime = savedPosition;
+                            Lampa.Noty.show('Продолжение с ' + formatTime(savedPosition));
+                        }
+                    } catch (e) {
+                        log('Error seeking to position:', e);
+                    }
+                }, 2000); // Ждём 2 секунды для буферизации
+            }
 
         } catch (err) {
             Lampa.Loading.stop();
@@ -401,6 +518,14 @@
                     const html = component.html ? $(component.html) : $(component);
                     addWatchButton(html, card);
                 }, 300);
+            }
+        });
+
+        // Слушаем закрытие плеера для сохранения позиции
+        Lampa.Listener.follow('player', function(event) {
+            if (event.type === 'destroy' || event.type === 'exit') {
+                log('Player closed, saving position');
+                stopPositionTracking();
             }
         });
 

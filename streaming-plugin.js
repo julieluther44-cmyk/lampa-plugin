@@ -400,21 +400,23 @@
             // Начинаем отслеживание позиции
             startPositionTracking(hash, videoFile.id);
 
-            // Восстанавливаем позицию после начала воспроизведения
-            if (savedPosition > 0) {
-                setTimeout(function() {
-                    try {
-                        const player = Lampa.Player.video();
-                        if (player) {
-                            log('Seeking to saved position:', savedPosition);
-                            player.currentTime = savedPosition;
+            // ВСЕГДА перематываем на нужную позицию (0 или сохранённую)
+            // Это исправляет баг когда HLS плеер прыгает в конец EVENT плейлиста
+            setTimeout(function() {
+                try {
+                    const player = Lampa.Player.video();
+                    if (player) {
+                        const targetPosition = savedPosition > 0 ? savedPosition : 0;
+                        log('Seeking to position:', targetPosition);
+                        player.currentTime = targetPosition;
+                        if (savedPosition > 0) {
                             Lampa.Noty.show('Продолжение с ' + formatTime(savedPosition));
                         }
-                    } catch (e) {
-                        log('Error seeking to position:', e);
                     }
-                }, 2000); // Ждём 2 секунды для буферизации
-            }
+                } catch (e) {
+                    log('Error seeking to position:', e);
+                }
+            }, 2000); // Ждём 2 секунды для буферизации
 
         } catch (err) {
             Lampa.Loading.stop();

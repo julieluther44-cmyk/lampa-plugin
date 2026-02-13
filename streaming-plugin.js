@@ -201,6 +201,11 @@
             }
         });
 
+        // Разрешить Ctrl+V
+        input.on('keydown', function(e) {
+            e.stopPropagation();
+        });
+
         // Escape для закрытия
         $(document).on('keydown.modalinput', function(e) {
             if (e.which === 27) {

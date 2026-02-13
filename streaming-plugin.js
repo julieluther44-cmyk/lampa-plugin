@@ -1,327 +1,431 @@
 (function() {
     'use strict';
 
-    // Конфигурация плагина
-    const PLUGIN_NAME = 'streaming-platform';
-    const PLUGIN_VERSION = '1.0.0';
+    const PLUGIN_NAME = 'streaming-hls';
+    const PLUGIN_VERSION = '2.0.0';
 
-    // Настройки по умолчанию
+    // Настройки
     const DEFAULT_SETTINGS = {
-        balancer_url: 'http://103.246.145.55:3000',
+        torrserver_url: 'http://178.20.46.93:8090',
+        torrserver_auth: 'admin:90Cubg8RQAe24h',
         enabled: true,
-        quality_preference: '1080p',
-        auto_play: false,
-        show_logs: false,
-        mock_mode: false  // Балансер доступен по публичному IP
+        quality_preference: '720p',
+        show_logs: true
     };
 
     let settings = DEFAULT_SETTINGS;
 
-    // Логирование
     function log(...args) {
         if (settings.show_logs) {
-            console.log('[Streaming Platform]', ...args);
+            console.log('[HLS Plugin]', ...args);
         }
     }
 
     function error(...args) {
-        console.error('[Streaming Platform]', ...args);
+        console.error('[HLS Plugin]', ...args);
     }
 
-    // Генерация анонимного user ID
-    function getUserID() {
-        let userID = Lampa.Storage.get('streaming_user_id');
-        if (!userID) {
-            userID = 'user_' + Math.random().toString(36).substring(2, 15);
-            Lampa.Storage.set('streaming_user_id', userID);
+    // Base64 encode для авторизации
+    function getAuthHeader() {
+        if (settings.torrserver_auth) {
+            return 'Basic ' + btoa(settings.torrserver_auth);
         }
-        return userID;
+        return null;
     }
 
-    // API запрос к балансеру
-    async function requestPlay(imdbID) {
-        log('Requesting play for IMDb ID:', imdbID);
-
-        const url = `${settings.balancer_url}/api/v1/content/play`;
-        const payload = {
-            imdb_id: imdbID,
-            user_id: getUserID(),
-            quality_preference: settings.quality_preference
+    // API запрос к TorrServer
+    async function torrserverRequest(endpoint, method = 'GET', body = null) {
+        const url = settings.torrserver_url + endpoint;
+        const headers = {
+            'Content-Type': 'application/json'
         };
 
+        const auth = getAuthHeader();
+        if (auth) {
+            headers['Authorization'] = auth;
+        }
+
+        const options = { method, headers };
+        if (body) {
+            options.body = JSON.stringify(body);
+        }
+
+        log('TorrServer request:', method, endpoint);
+        const response = await fetch(url, options);
+
+        if (!response.ok) {
+            throw new Error(`TorrServer error: ${response.status}`);
+        }
+
+        const text = await response.text();
         try {
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(payload)
-            });
-
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-
-            const data = await response.json();
-            log('Play response:', data);
-            return data;
-
-        } catch (err) {
-            error('Failed to request play:', err);
-            throw err;
+            return JSON.parse(text);
+        } catch {
+            return text;
         }
     }
 
-    // Воспроизведение контента
-    async function playContent(card) {
-        log('Play content called for card:', card);
+    // Получить список торрентов
+    async function getTorrents() {
+        return await torrserverRequest('/torrents', 'POST', { action: 'list' });
+    }
 
-        // Получить IMDb ID из карточки
-        const imdbID = card.imdb_id || (card.source && card.source.imdb_id);
+    // Добавить торрент по magnet
+    async function addTorrent(magnet, title) {
+        return await torrserverRequest('/torrents', 'POST', {
+            action: 'add',
+            link: magnet,
+            title: title,
+            save_to_db: true
+        });
+    }
 
-        if (!imdbID) {
-            Lampa.Noty.show('Ошибка: IMDb ID не найден');
-            return;
+    // Загрузить торрент (получить info)
+    async function loadTorrent(hash) {
+        return await torrserverRequest('/torrents', 'POST', {
+            action: 'get',
+            hash: hash
+        });
+    }
+
+    // Найти видео файл в торренте
+    function findVideoFile(torrentData) {
+        const videoExtensions = ['.mkv', '.mp4', '.avi', '.mov', '.wmv', '.m4v'];
+        let files = [];
+
+        // Парсим file_stats из ответа
+        if (torrentData.file_stats) {
+            files = torrentData.file_stats;
+        } else if (torrentData.data) {
+            try {
+                const data = JSON.parse(torrentData.data);
+                if (data.TorrServer && data.TorrServer.Files) {
+                    files = data.TorrServer.Files;
+                }
+            } catch (e) {
+                log('Failed to parse torrent data:', e);
+            }
         }
 
-        // Показать загрузку
+        // Находим самый большой видео файл
+        let bestFile = null;
+        let maxSize = 0;
+
+        for (const file of files) {
+            const path = file.path || '';
+            const ext = path.substring(path.lastIndexOf('.')).toLowerCase();
+
+            if (videoExtensions.includes(ext)) {
+                const size = file.length || 0;
+                if (size > maxSize) {
+                    maxSize = size;
+                    bestFile = file;
+                }
+            }
+        }
+
+        return bestFile;
+    }
+
+    // Получить HLS URL для файла
+    function getHLSUrl(hash, fileId) {
+        return `${settings.torrserver_url}/hls/${hash}/${fileId}/master.m3u8`;
+    }
+
+    // Показать диалог выбора торрента
+    function showTorrentSelector(torrents, card, onSelect) {
+        const items = torrents.map(t => ({
+            title: t.title || t.name || 'Unknown',
+            hash: t.hash,
+            size: t.torrent_size ? formatSize(t.torrent_size) : '',
+            subtitle: t.stat_string || ''
+        }));
+
+        Lampa.Select.show({
+            title: 'Выберите торрент',
+            items: items,
+            onSelect: function(item) {
+                onSelect(item.hash);
+            },
+            onBack: function() {
+                Lampa.Controller.toggle('content');
+            }
+        });
+    }
+
+    // Форматирование размера
+    function formatSize(bytes) {
+        if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(2) + ' GB';
+        if (bytes >= 1048576) return (bytes / 1048576).toFixed(2) + ' MB';
+        return bytes + ' B';
+    }
+
+    // Показать диалог добавления торрента
+    function showAddTorrentDialog(card) {
+        Lampa.Input.edit({
+            title: 'Добавить торрент',
+            value: '',
+            placeholder: 'Вставьте magnet ссылку',
+            onBack: function() {
+                Lampa.Controller.toggle('content');
+            },
+            onEnter: async function(magnet) {
+                if (!magnet || !magnet.startsWith('magnet:')) {
+                    Lampa.Noty.show('Неверная magnet ссылка');
+                    return;
+                }
+
+                Lampa.Loading.start();
+
+                try {
+                    const title = card.title || card.name || 'Unknown';
+                    log('Adding torrent:', magnet);
+
+                    const result = await addTorrent(magnet, title);
+                    log('Torrent added:', result);
+
+                    if (result && result.hash) {
+                        // Даём время на загрузку info
+                        await new Promise(r => setTimeout(r, 2000));
+                        await playTorrent(result.hash, card);
+                    } else {
+                        throw new Error('No hash in response');
+                    }
+                } catch (err) {
+                    Lampa.Loading.stop();
+                    Lampa.Noty.show('Ошибка: ' + err.message);
+                    error('Add torrent failed:', err);
+                }
+            }
+        });
+    }
+
+    // Воспроизвести торрент по hash
+    async function playTorrent(hash, card) {
+        log('Playing torrent:', hash);
+
         Lampa.Loading.start();
 
         try {
-            let playData;
+            // Загружаем торрент
+            const torrentData = await loadTorrent(hash);
+            log('Torrent data:', torrentData);
 
-            // Mock режим - не делаем запрос к балансеру
-            if (settings.mock_mode) {
-                log('Mock mode enabled - using test stream URL');
-                playData = {
-                    stream_url: 'https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.m3u8',
-                    quality: '1080p',
-                    backup_torrservers: []
-                };
-                Lampa.Noty.show('Mock режим: тестовое видео');
-            } else {
-                // Запросить URL стрима у балансера
-                playData = await requestPlay(imdbID);
+            if (torrentData.stat_string === 'Torrent in db') {
+                // Нужно активировать торрент
+                log('Torrent in db, activating...');
+                await new Promise(r => setTimeout(r, 1000));
+                const activated = await loadTorrent(hash);
+                log('Activated:', activated);
             }
+
+            // Ждём пока торрент загрузит info
+            let attempts = 0;
+            let data = torrentData;
+
+            while (attempts < 10 && (!data.file_stats || data.file_stats.length === 0)) {
+                await new Promise(r => setTimeout(r, 1000));
+                data = await loadTorrent(hash);
+                attempts++;
+                log('Waiting for torrent info, attempt:', attempts);
+            }
+
+            // Находим видео файл
+            const videoFile = findVideoFile(data);
+
+            if (!videoFile) {
+                throw new Error('Видео файл не найден в торренте');
+            }
+
+            log('Video file found:', videoFile);
+
+            // Формируем HLS URL
+            const hlsUrl = getHLSUrl(hash, videoFile.id);
+            log('HLS URL:', hlsUrl);
 
             Lampa.Loading.stop();
 
-            // Подготовить данные для плеера
-            const videoData = {
-                url: playData.stream_url,
-                title: card.title || card.name || 'Streaming',
-                quality: playData.quality || settings.quality_preference,
-                subtitles: [],
-                callback: function() {
-                    log('Player closed');
-                }
-            };
+            // Воспроизводим
+            Lampa.Player.play({
+                url: hlsUrl,
+                title: card.title || card.name || videoFile.path,
+                quality: {},
+                subtitles: []
+            });
 
-            log('Opening player with URL:', videoData.url);
-
-            // Открыть плеер Lampa
-            Lampa.Player.play(videoData);
-
-            // Настроить обработчик ошибок для failover (только если не mock)
-            if (!settings.mock_mode && playData.backup_torrservers) {
-                setupPlayerErrorHandler(playData);
-            }
+            Lampa.Player.playlist([{
+                url: hlsUrl,
+                title: card.title || card.name || videoFile.path
+            }]);
 
         } catch (err) {
             Lampa.Loading.stop();
-            Lampa.Noty.show('Ошибка загрузки: ' + err.message);
+            Lampa.Noty.show('Ошибка воспроизведения: ' + err.message);
             error('Play failed:', err);
         }
     }
 
-    // Настроить failover на backup сервера
-    function setupPlayerErrorHandler(playData) {
-        let failoverAttempts = 0;
-        const maxAttempts = playData.backup_torrservers ? playData.backup_torrservers.length : 0;
+    // Главная функция воспроизведения
+    async function playContent(card) {
+        log('Play content:', card);
 
-        Lampa.Player.listener.follow('error', function(event) {
-            log('Player error detected, attempting failover...', event);
+        Lampa.Loading.start();
 
-            if (failoverAttempts >= maxAttempts) {
-                error('All backup servers failed');
-                Lampa.Noty.show('Ошибка: все сервера недоступны');
+        try {
+            // Получаем список торрентов
+            const torrents = await getTorrents();
+            log('Available torrents:', torrents);
+
+            Lampa.Loading.stop();
+
+            if (!torrents || torrents.length === 0) {
+                // Нет торрентов - показываем диалог добавления
+                showAddTorrentDialog(card);
                 return;
             }
 
-            const backupURL = playData.backup_torrservers[failoverAttempts];
-            const imdbID = playData.stream_url.match(/hls\/([^\/]+)\//)[1];
-            const newStreamURL = `${backupURL}/hls/${imdbID}/master.m3u8`;
+            // Показываем меню выбора
+            const items = [
+                {
+                    title: '➕ Добавить новый торрент',
+                    action: 'add'
+                },
+                ...torrents.map(t => ({
+                    title: t.title || t.name || 'Unknown',
+                    subtitle: formatSize(t.torrent_size || 0) + ' • ' + (t.stat_string || ''),
+                    hash: t.hash,
+                    action: 'play'
+                }))
+            ];
 
-            log('Switching to backup server:', newStreamURL);
-
-            Lampa.Player.play({
-                url: newStreamURL,
-                title: 'Streaming (backup server)',
-                subtitles: []
+            Lampa.Select.show({
+                title: 'Выберите источник',
+                items: items,
+                onSelect: async function(item) {
+                    if (item.action === 'add') {
+                        showAddTorrentDialog(card);
+                    } else {
+                        await playTorrent(item.hash, card);
+                    }
+                },
+                onBack: function() {
+                    Lampa.Controller.toggle('content');
+                }
             });
 
-            failoverAttempts++;
-        });
+        } catch (err) {
+            Lampa.Loading.stop();
+            Lampa.Noty.show('Ошибка: ' + err.message);
+            error('Failed:', err);
+        }
     }
 
-    // Добавить кнопку "Смотреть онлайн" к карточке
+    // Добавить кнопку на карточку
     function addWatchButton(component, card) {
         if (!settings.enabled) return;
 
-        log('Adding watch button to card');
+        const button = $('<div class="full-start__button selector view--online-hls">')
+            .html('<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z" fill="currentColor"/></svg><span>HLS Стрим</span>');
 
-        // Создать кнопку
-        const button = $('<div class="full-start__button selector view--online">')
-            .html('<svg width="17" height="17" viewBox="0 0 17 17" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M8.5 15.5C12.366 15.5 15.5 12.366 15.5 8.5C15.5 4.63401 12.366 1.5 8.5 1.5C4.63401 1.5 1.5 4.63401 1.5 8.5C1.5 12.366 4.63401 15.5 8.5 15.5Z" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M11.5 8.5L7.5 11V6L11.5 8.5Z" fill="white"/></svg><span>Смотреть онлайн</span>');
+        button.on('hover:enter', function() {
+            playContent(card);
+        });
 
-        // Обработчик клика
+        // Для клика мышью
         button.on('click', function() {
             playContent(card);
         });
 
-        // Найти контейнер для кнопок (новая версия Lampa использует full-start-new__buttons)
-        let buttonsContainer = component.find('.full-start-new__buttons');
-
-        // Fallback для старых версий Lampa
-        if (!buttonsContainer.length) {
-            buttonsContainer = component.find('.full-start__buttons');
+        let container = component.find('.full-start-new__buttons');
+        if (!container.length) {
+            container = component.find('.full-start__buttons');
         }
 
-        if (buttonsContainer.length) {
-            buttonsContainer.append(button);
-            log('Button added successfully');
-        } else {
-            error('Buttons container not found');
+        if (container.length) {
+            container.append(button);
+            log('Button added');
         }
     }
 
-    // Инициализация: слушать события Lampa
+    // Инициализация
     function initialize() {
-        log('Plugin initializing...');
+        log('Initializing...');
 
-        // Слушать событие полной загрузки карточки фильма/сериала
         Lampa.Listener.follow('full', function(event) {
             if (event.type === 'complite') {
-                log('Full card loaded:', event.data);
-
                 const card = event.data.movie;
                 const component = event.object.activity.component;
 
-                // Добавить кнопку после небольшой задержки (чтобы DOM успел обновиться)
                 setTimeout(function() {
-                    // Получить HTML компонента
-                    const componentHTML = component.html ? $(component.html) : $(component);
-                    addWatchButton(componentHTML, card);
-                }, 500);
+                    const html = component.html ? $(component.html) : $(component);
+                    addWatchButton(html, card);
+                }, 300);
             }
         });
 
-        // Слушать события плеера для логирования
-        Lampa.Player.listener.follow('start', function() {
-            log('Player started');
-        });
-
-        Lampa.Player.listener.follow('ended', function() {
-            log('Player ended');
-        });
-
-        log('Plugin initialized successfully');
+        log('Initialized');
     }
 
     // Настройки плагина
-    function createSettingsInterface() {
-        return {
-            component: 'streaming_platform',
-            name: 'Streaming Platform',
-            icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="white" stroke-width="2"/><path d="M15 12L10 15V9L15 12Z" fill="white"/></svg>',
-            items: [
-                {
-                    name: 'Включено',
-                    type: 'toggle',
-                    value: settings.enabled,
-                    onChange: function(value) {
-                        settings.enabled = value;
-                        saveSettings();
-                    }
-                },
-                {
-                    name: 'URL балансера',
-                    type: 'input',
-                    value: settings.balancer_url,
-                    placeholder: 'http://localhost:8080',
-                    onChange: function(value) {
-                        settings.balancer_url = value;
-                        saveSettings();
-                    }
-                },
-                {
-                    name: 'Предпочитаемое качество',
-                    type: 'select',
-                    value: settings.quality_preference,
-                    values: ['2160p', '1080p', '720p', '480p'],
-                    onChange: function(value) {
-                        settings.quality_preference = value;
-                        saveSettings();
-                    }
-                },
-                {
-                    name: 'Автовоспроизведение',
-                    type: 'toggle',
-                    value: settings.auto_play,
-                    onChange: function(value) {
-                        settings.auto_play = value;
-                        saveSettings();
-                    }
-                },
-                {
-                    name: 'Показывать логи в консоли',
-                    type: 'toggle',
-                    value: settings.show_logs,
-                    onChange: function(value) {
-                        settings.show_logs = value;
-                        saveSettings();
-                    }
-                }
-            ]
-        };
-    }
-
-    function saveSettings() {
-        Lampa.Storage.set('streaming_platform_settings', settings);
-        log('Settings saved:', settings);
-    }
-
-    // Регистрация плагина в Lampa
-    function startPlugin() {
-        // Загрузить настройки из хранилища
-        settings = Lampa.Storage.get('streaming_platform_settings', DEFAULT_SETTINGS);
-
-        // Добавить раздел настроек
-        Lampa.Settings.listener.follow('open', function(event) {
-            if (event.name === 'main') {
-                Lampa.SettingsApi.addComponent(createSettingsInterface());
+    function addSettings() {
+        Lampa.SettingsApi.addParam({
+            component: 'hls_streaming',
+            param: {
+                name: 'torrserver_url',
+                type: 'input',
+                values: settings.torrserver_url,
+                default: DEFAULT_SETTINGS.torrserver_url
+            },
+            field: {
+                name: 'URL TorrServer',
+                description: 'Адрес TorrServer с HLS'
+            },
+            onChange: function(value) {
+                settings.torrserver_url = value;
+                Lampa.Storage.set('hls_settings', settings);
             }
         });
 
-        // Инициализировать основную функциональность
-        initialize();
-
-        // Показать уведомление об успешной загрузке
-        Lampa.Noty.show(`Streaming Platform v${PLUGIN_VERSION} загружен`);
-        log(`Plugin v${PLUGIN_VERSION} started successfully`);
+        Lampa.SettingsApi.addParam({
+            component: 'hls_streaming',
+            param: {
+                name: 'torrserver_auth',
+                type: 'input',
+                values: settings.torrserver_auth,
+                default: ''
+            },
+            field: {
+                name: 'Авторизация',
+                description: 'user:password (если требуется)'
+            },
+            onChange: function(value) {
+                settings.torrserver_auth = value;
+                Lampa.Storage.set('hls_settings', settings);
+            }
+        });
     }
 
-    // Точка входа
+    // Запуск
+    function startPlugin() {
+        const saved = Lampa.Storage.get('hls_settings', {});
+        settings = Object.assign({}, DEFAULT_SETTINGS, saved);
+
+        Lampa.Settings.listener.follow('open', function(e) {
+            if (e.name === 'main') {
+                setTimeout(addSettings, 10);
+            }
+        });
+
+        initialize();
+        Lampa.Noty.show('HLS Streaming v' + PLUGIN_VERSION);
+        log('Started, TorrServer:', settings.torrserver_url);
+    }
+
     if (window.Lampa) {
         startPlugin();
     } else {
-        // Если Lampa еще не загружена, ждем
         document.addEventListener('DOMContentLoaded', function() {
-            if (window.Lampa) {
-                startPlugin();
-            } else {
-                error('Lampa not found');
-            }
+            if (window.Lampa) startPlugin();
         });
     }
 

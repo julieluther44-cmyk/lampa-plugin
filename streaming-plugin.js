@@ -162,11 +162,10 @@
 
     // Показать диалог добавления торрента
     function showAddTorrentDialog(card) {
-        Lampa.Prompt.show({
-            title: 'Добавить торрент',
-            placeholder: 'Вставьте magnet ссылку',
+        Lampa.Keyboard.show({
+            title: 'Вставьте magnet ссылку',
             value: '',
-            onEnter: function(magnet) {
+            callback: function(magnet) {
                 log('Magnet entered:', magnet);
 
                 if (!magnet || !magnet.startsWith('magnet:')) {
@@ -175,9 +174,6 @@
                 }
 
                 addTorrentAndPlay(magnet, card);
-            },
-            onBack: function() {
-                Lampa.Controller.toggle('content');
             }
         });
     }

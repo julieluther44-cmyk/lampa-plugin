@@ -162,42 +162,49 @@
 
     // Показать диалог добавления торрента
     function showAddTorrentDialog(card) {
-        Lampa.Input.edit({
+        Lampa.Prompt.show({
             title: 'Добавить торрент',
-            value: '',
             placeholder: 'Вставьте magnet ссылку',
-            onBack: function() {
-                Lampa.Controller.toggle('content');
-            },
-            onEnter: async function(magnet) {
+            value: '',
+            onEnter: function(magnet) {
+                log('Magnet entered:', magnet);
+
                 if (!magnet || !magnet.startsWith('magnet:')) {
                     Lampa.Noty.show('Неверная magnet ссылка');
                     return;
                 }
 
-                Lampa.Loading.start();
-
-                try {
-                    const title = card.title || card.name || 'Unknown';
-                    log('Adding torrent:', magnet);
-
-                    const result = await addTorrent(magnet, title);
-                    log('Torrent added:', result);
-
-                    if (result && result.hash) {
-                        // Даём время на загрузку info
-                        await new Promise(r => setTimeout(r, 2000));
-                        await playTorrent(result.hash, card);
-                    } else {
-                        throw new Error('No hash in response');
-                    }
-                } catch (err) {
-                    Lampa.Loading.stop();
-                    Lampa.Noty.show('Ошибка: ' + err.message);
-                    error('Add torrent failed:', err);
-                }
+                addTorrentAndPlay(magnet, card);
+            },
+            onBack: function() {
+                Lampa.Controller.toggle('content');
             }
         });
+    }
+
+    // Добавить торрент и воспроизвести
+    async function addTorrentAndPlay(magnet, card) {
+        Lampa.Loading.start();
+
+        try {
+            const title = card.title || card.name || 'Unknown';
+            log('Adding torrent:', magnet);
+
+            const result = await addTorrent(magnet, title);
+            log('Torrent added:', result);
+
+            if (result && result.hash) {
+                // Даём время на загрузку info
+                await new Promise(r => setTimeout(r, 2000));
+                await playTorrent(result.hash, card);
+            } else {
+                throw new Error('No hash in response');
+            }
+        } catch (err) {
+            Lampa.Loading.stop();
+            Lampa.Noty.show('Ошибка: ' + err.message);
+            error('Add torrent failed:', err);
+        }
     }
 
     // Воспроизвести торрент по hash

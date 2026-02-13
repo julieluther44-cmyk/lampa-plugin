@@ -162,18 +162,46 @@
 
     // Показать диалог добавления торрента
     function showAddTorrentDialog(card) {
-        Lampa.Keyboard.show({
-            title: 'Вставьте magnet ссылку',
-            value: '',
-            callback: function(magnet) {
-                log('Magnet entered:', magnet);
+        // Создаём модальное окно вручную
+        var modal = $('<div class="modal modal--input"><div class="modal__content"><div class="modal__head"><div class="modal__title">Добавить торрент</div></div><div class="modal__body"><div class="modal__descr">Вставьте magnet ссылку:</div><input type="text" class="modal__input" placeholder="magnet:?xt=urn:btih:..." style="width:100%;padding:10px;margin:10px 0;background:#333;border:1px solid #555;color:#fff;border-radius:5px;font-size:14px;"></div><div class="modal__footer"><div class="modal__buttons"><div class="modal__button modal__button--add selector">Добавить</div><div class="modal__button modal__button--cancel selector">Отмена</div></div></div></div></div>');
 
-                if (!magnet || !magnet.startsWith('magnet:')) {
-                    Lampa.Noty.show('Неверная magnet ссылка');
-                    return;
-                }
+        $('body').append(modal);
 
-                addTorrentAndPlay(magnet, card);
+        var input = modal.find('.modal__input');
+        input.focus();
+
+        modal.find('.modal__button--add').on('click', function() {
+            var magnet = input.val().trim();
+            modal.remove();
+
+            log('Magnet entered:', magnet);
+
+            if (!magnet || !magnet.startsWith('magnet:')) {
+                Lampa.Noty.show('Неверная magnet ссылка');
+                return;
+            }
+
+            addTorrentAndPlay(magnet, card);
+        });
+
+        modal.find('.modal__button--cancel').on('click', function() {
+            modal.remove();
+            Lampa.Controller.toggle('content');
+        });
+
+        // Enter для отправки
+        input.on('keypress', function(e) {
+            if (e.which === 13) {
+                modal.find('.modal__button--add').click();
+            }
+        });
+
+        // Escape для закрытия
+        $(document).on('keydown.modalinput', function(e) {
+            if (e.which === 27) {
+                modal.remove();
+                $(document).off('keydown.modalinput');
+                Lampa.Controller.toggle('content');
             }
         });
     }

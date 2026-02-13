@@ -229,6 +229,7 @@
             if (result && result.hash) {
                 // Даём время на загрузку info
                 await new Promise(r => setTimeout(r, 2000));
+                Lampa.Loading.stop();
                 await playTorrent(result.hash, card);
             } else {
                 throw new Error('No hash in response');

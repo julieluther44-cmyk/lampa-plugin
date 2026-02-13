@@ -2,7 +2,7 @@
     'use strict';
 
     const PLUGIN_NAME = 'streaming-hls';
-    const PLUGIN_VERSION = '2.1.0';
+    const PLUGIN_VERSION = '2.2.0';
 
     // Текущее воспроизведение (для сохранения позиции)
     let currentPlayback = null;
@@ -400,23 +400,39 @@
             // Начинаем отслеживание позиции
             startPositionTracking(hash, videoFile.id);
 
-            // ВСЕГДА перематываем на нужную позицию (0 или сохранённую)
-            // Это исправляет баг когда HLS плеер прыгает в конец EVENT плейлиста
-            setTimeout(function() {
-                try {
-                    const player = Lampa.Player.video();
-                    if (player) {
-                        const targetPosition = savedPosition > 0 ? savedPosition : 0;
-                        log('Seeking to position:', targetPosition);
-                        player.currentTime = targetPosition;
-                        if (savedPosition > 0) {
+            // Перемотка на сохранённую позицию когда видео готово
+            if (savedPosition > 0) {
+                log('Will seek to saved position:', savedPosition);
+
+                // Функция для перемотки
+                function seekToSavedPosition() {
+                    try {
+                        const player = Lampa.Player.video();
+                        if (player && player.readyState >= 2) {
+                            log('Seeking to position:', savedPosition);
+                            player.currentTime = savedPosition;
                             Lampa.Noty.show('Продолжение с ' + formatTime(savedPosition));
+                            return true;
+                        }
+                    } catch (e) {
+                        log('Error seeking:', e);
+                    }
+                    return false;
+                }
+
+                // Пробуем несколько раз с задержкой
+                let attempts = 0;
+                const maxAttempts = 10;
+                const seekInterval = setInterval(function() {
+                    attempts++;
+                    if (seekToSavedPosition() || attempts >= maxAttempts) {
+                        clearInterval(seekInterval);
+                        if (attempts >= maxAttempts) {
+                            log('Failed to seek after', maxAttempts, 'attempts');
                         }
                     }
-                } catch (e) {
-                    log('Error seeking to position:', e);
-                }
-            }, 2000); // Ждём 2 секунды для буферизации
+                }, 1000);
+            }
 
         } catch (err) {
             Lampa.Loading.stop();
